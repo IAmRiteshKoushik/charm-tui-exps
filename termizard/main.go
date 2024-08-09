@@ -1,9 +1,10 @@
 package main
 
 import (
-	"log"
+    "log"
+    "fmt"
+    "os"
 
-    "github.com/charmbracelet/bubbles/textinput"
     "github.com/charmbracelet/lipgloss" 
     tea "github.com/charmbracelet/bubbletea"
 )
@@ -27,31 +28,38 @@ func DefaultStyles() *Styles {
 }
 
 type model struct {
+    styles      *Styles
     index       int
     questions   []Question
     width       int
     height      int
-    answerField textinput.Model
-    styles      *Styles
+    // answerField textinput.Model -> deprecated
+    done        bool
 }
 
 // Constructor for model struct
 func New(questions []Question) *model {
     styles := DefaultStyles()
-    answerField := textinput.New()
-    answerField.Placeholder = "Your answer here:"
-    answerField.Focus()
+
+    // -> deprecated
+    // answerField := textinput.New()
+    // answerField.Placeholder = "Your answer here:"
+    // answerField.Focus()
 
     return &model{
-        questions:      questions,
-        answerField:    answerField,
-        styles:         styles,
+        questions:  questions,
+        styles:     styles,
     }
 }
+
+// func (m model) Init() tea.Cmd {
+//     return m.questions[m.index].input.Blink
+// }
 
 type Question struct {
     question    string
     answer      string
+    input       Input
 }
 
 // Constructor for Question struct
@@ -61,12 +69,28 @@ func NewQuestion(question string) Question{
     }
 }
 
+func newShortQuestion(question string) Question {
+    q := NewQuestion(question)
+    field := NewShortAnswerField()
+    q.input = field
+    return q 
+}
+
+func newLongQuestion(question string) Question {
+    q := NewQuestion(question)
+    field := NewLongAnswerField()
+    q.input = field
+    return q 
+}
+
 
 func (m model) Init() tea.Cmd {
-    return nil
+    return m.questions[m.index].input.Blink
+    // return nil
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+    var cmd tea.Cmd
     current := &m.questions[m.index]
     switch msg := msg.(type) {
     case tea.WindowSizeMsg:
@@ -77,39 +101,47 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
         case "ctrl+c":
             return m, tea.Quit
         case "enter":
-            current.answer = m.answerField.Value()
-            m.answerField.SetValue("")
-            log.Printf("Question: %s, answer %s", current.question, current.answer)
+            if m.index == len(m.questions) - 1 {
+                m.done = true
+            }
+            current.answer = current.input.Value()
             m.Next()
-            return m, nil
+            return m, current.input.Blur
         }
     }
-    var cmd tea.Cmd
-    m.answerField, cmd = m.answerField.Update(msg)
+    current.input, cmd = current.input.Update(msg)
     return m, cmd
 }
 
 func (m model) View() string {
-    // If the screen is stuck on loading by any chance then we can send out 
-    // a loading message
+    current := m.questions[m.index]
+    if m.done {
+        var output string
+        for _, q := range m.questions {
+            output += fmt.Sprintf("%s: %s\n", q.question, q.answer)
+        }
+        return output
+    }
     if m.width == 0 {
         return "loading ..."
     }
 
+    // Adding location to the components
     return lipgloss.Place(
         m.width,
         m.height,
         lipgloss.Center,
         lipgloss.Center, 
         lipgloss.JoinVertical(
-            lipgloss.Center, 
-            m.questions[m.index].question, 
-            m.styles.InputField.Render(m.answerField.View()),
+            lipgloss.Left, 
+            current.question,
+            m.styles.InputField.Render(current.input.View()),
             ),
         )
 }
 
 func (m *model) Next() {
+    // Change index or rotate through if last element is reached
     if m.index < len(m.questions) - 1 {
         m.index++
     } else {
@@ -120,23 +152,25 @@ func (m *model) Next() {
 func main(){
     // Setting up basic questions
     questions := []Question {
-        NewQuestion("What is your name ?"),
-        NewQuestion("What is your favourite editor ?"),
-        NewQuestion("What is your favourite quote ?"),
+        newShortQuestion("What is your name ?"),
+        newShortQuestion("What is your favourite editor ?"),
+        newLongQuestion("What is your favourite quote ?"),
     } 
-    m := New(questions)
+    init := New(questions)
 
     // Setting up debugging logs
     f, err := tea.LogToFile("debug.log", "DEBUG:")
     if err != nil {
         log.Fatal("err: %w", err)
+        os.Exit(1)
     }
     defer f.Close()
 
     // Adding the questions slice to the program
-    p  := tea.NewProgram(m, tea.WithAltScreen())
+    p  := tea.NewProgram(*init, tea.WithAltScreen())
     // Running the application and check for errors
     if _, err := p.Run(); err != nil {
         log.Fatal(err)
+        os.Exit(1)
     }
 }
